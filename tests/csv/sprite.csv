@@ -1,0 +1,10 @@
+[sprite]
+<id>,path,x,y,w,h
+<type>,string,int,int,int,int
+background,all.png,0,0,640,480
+ball,all.png,0,0,128,128
+
+[clickable]
+<id>,sprite,radius
+<type>,sprite,int
+ball,ball,48
