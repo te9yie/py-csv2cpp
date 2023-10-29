@@ -34,13 +34,66 @@ class MetaMember:
         self.var_type: str = var_type
         self.column_indices: list[int] = []
 
-    def memory_size(self):
+    def memory_size(self) -> int:
         if len(self.column_indices) > 1:
             return 4
         return get_memory_size(self.var_type)
 
+    def member_strs(self) -> list[str]:
+        if len(self.column_indices) > 1:
+            return [""]
+        else:
+            if self.var_type == "bool":
+                return ["bool {};".format(self.var_name)]
+            if self.var_type == "int":
+                return ["int {};".format(self.var_name)]
+            if self.var_type == "float":
+                return ["float {};".format(self.var_name)]
+            if self.var_type == "string":
+                return ["int {}_offset;".format(self.var_name)]
+        return ["int {};".format(self.var_name)]
 
-def cmp_var_type(a: MetaMember, b: MetaMember):
+    def method_strs(self, indent: str) -> list[str]:
+        if len(self.column_indices) > 1:
+            if self.var_type == "bool" or self.var_type == "int" or self.var_type == "float":
+                return self.__array_method_strs(indent, self.var_name, self.var_type)
+            elif self.var_type == "string":
+                return [
+                    "const char* {}(std::size_t i) const {{".format(self.var_name),
+                    "{}auto top = reinterpret_cast<const std::byte*>(this);".format(indent),
+                    "{}auto s_top = reinterpret_cast<const int*>(top + {}_offset);".format(
+                        indent, self.var_name
+                    ),
+                    "{}return reinterpret_cast<const char*>(s_top + i);".format(indent),
+                    "}",
+                ]
+            return self.__array_method_strs(indent, self.var_name, "int")
+        else:
+            if self.var_type == "string":
+                return [
+                    "const char* {}() const {{".format(self.var_name),
+                    "{}auto top = reinterpret_cast<const std::byte*>(this);".format(
+                        indent
+                    ),
+                    "{}return reinterpret_cast<const char*>(top + {}_offset);".format(
+                        indent, self.var_name
+                    ),
+                    "}",
+                ]
+        return []
+
+    def __array_method_strs(self, indent: str, var_name: str, var_type: str) -> list[str]:
+        return [
+            "{} {}(std::size_t i) const {{".format(var_type, var_name),
+            "{}auto top = reinterpret_cast<const std::byte*>(this);".format(indent),
+            "{}return *(reinterpret_cast<const {}*>(top + {}_offset) + i);".format(
+                indent, var_type, var_name
+            ),
+            "}",
+        ]
+
+
+def cmp_var_type(a: MetaMember, b: MetaMember) -> int:
     a_size = a.memory_size()
     b_size = b.memory_size()
     if a_size < b_size:
@@ -99,6 +152,18 @@ class MetaTable:
 
         self.members = list(member_map.values())
         self.members.sort(key=cmp_to_key(cmp_var_type))
+
+    def member_strs(self) -> list[str]:
+        strs: list[str] = []
+        for member in self.members:
+            strs += member.member_strs()
+        return strs
+
+    def method_strs(self, indent: str) -> list[str]:
+        strs: list[str] = []
+        for member in self.members:
+            strs += member.method_strs(indent)
+        return strs
 
 
 class MetaDatabase:
@@ -159,6 +224,7 @@ def main():
     database.parse(files)
     database.setup_table_ids()
 
+    """
     for table_name in database.meta_tables:
         table = database.meta_tables[table_name]
         print("<{}:{}>".format(table.id, table.id_str))
@@ -172,6 +238,12 @@ def main():
                 for i in m.column_indices:
                     print("'{}'".format(entry.value_strs[i]), end=" ")
             print()
+    """
+    for table_name in database.meta_tables:
+        table = database.meta_tables[table_name]
+        print("<{}:{}>".format(table.id, table.id_str))
+        print("\n".join(table.member_strs()))
+        print("\n".join(table.method_strs("  ")))
 
 
 if __name__ == "__main__":
