@@ -1,22 +1,30 @@
-import argparse
 from __future__ import annotations
+import argparse
 from functools import cmp_to_key
 import os
 import glob
 import csv
 import re
 
-from csv2cpp.binary import Binary
+from .binary import Binary
+from .binary_array import BinaryArray
 
 
+PACK_ALIGN = 4
 TABLE_NAME_R = r"^\[(?P<name>.+)\]$"
 TABLE_TAG_R = r"^<(?P<name>.+)>$"
+
+
+def is_ignore_type(var_type: str) -> bool:
+    if var_type == "id" or var_type == "comment":
+        return True
+    return False
 
 
 def get_memory_size(var_type: str) -> int:
     """型名のメモリ使用量を取得する"""
 
-    if var_type == "id" or var_type == "comment":
+    if is_ignore_type(var_type):
         return 0
     elif var_type == "bool":
         return 1
@@ -46,6 +54,14 @@ class StringBin:
         self.index[s] = len(self.bin)
         self.bin.append_string(s)
 
+    def align(self, align: int):
+        self.bin.align(align)
+
+    def get_index(self, s: str) -> int:
+        if s not in self.index:
+            raise KeyError(f"not found string: {s}")
+        return self.index[s]
+
 
 class MetaMember:
     """文字列で構成されたメンバー情報"""
@@ -59,18 +75,17 @@ class MetaMember:
         return len(self.column_indices) > 1
 
     def memory_size(self) -> int:
-        memory_size = get_memory_size(self.var_type)
-        if memory_size == 0:
+        if is_ignore_type(self.var_type):
             return 0
         if self.is_array():
             return 4
-        return memory_size
+        return get_memory_size(self.var_type)
 
     def member_strs(self) -> list[str]:
-        if get_memory_size(self.var_type) == 0:
+        if is_ignore_type(self.var_type):
             return []
         if self.is_array():
-            return [f"int {self.var_name}_offset;", f"std::size_t {self.var_name}_len;"]
+            return [f"int {self.var_name}_offset;", f"int {self.var_name}_len;"]
         else:
             if self.var_type == "bool":
                 return [f"bool {self.var_name};"]
@@ -83,7 +98,7 @@ class MetaMember:
         return [f"int {self.var_name};"]
 
     def method_strs(self, indent: str) -> list[str]:
-        if get_memory_size(self.var_type) == 0:
+        if is_ignore_type(self.var_type):
             return []
         if self.is_array():
             if (
@@ -98,7 +113,7 @@ class MetaMember:
                     f"{indent}auto top = reinterpret_cast<const std::byte*>(this);",
                     f"{indent}auto s_top = reinterpret_cast<const int*>(top + {self.var_name}_offset);",
                     f"{indent}return reinterpret_cast<const char*>(s_top + i);",
-                    f"}}",
+                    "}",
                 ]
             return self.__array_method_strs(indent, self.var_name, "int")
         else:
@@ -107,7 +122,7 @@ class MetaMember:
                     f"const char* {self.var_name}() const {{",
                     f"{indent}auto top = reinterpret_cast<const std::byte*>(this);",
                     f"{indent}return reinterpret_cast<const char*>(top + {self.var_name}_offset);",
-                    f"}}",
+                    "}",
                 ]
         return []
 
@@ -118,7 +133,7 @@ class MetaMember:
             f"{var_type} {var_name}(std::size_t i) const {{",
             f"{indent}auto top = reinterpret_cast<const std::byte*>(this);",
             f"{indent}return *(reinterpret_cast<const {var_type}*>(top + {var_name}_offset) + i);",
-            f"}}",
+            "}",
         ]
 
 
@@ -140,17 +155,29 @@ class MetaEntry:
         self.id_str = id_str
         self.value_strs: list[str] = []
 
-    def make_bin(self, table: MetaTable) -> Binary:
-        str_bin: StringBin = make_string_bin()
-
-        bin = Binary()
-        ext_bin = Binary()
+    def __make_string_bin(self, table: MetaTable) -> StringBin:
+        str_bin: StringBin = StringBin()
         for member in table.members:
-            array_bin = Binary()
+            if member.var_type != "string":
+                continue
             for i in member.column_indices:
-                value = self.value_strs[i]
-                if member.is_array():
-                    bin.append("I", len(ext_bin))
+                str_bin.append(self.value_strs[i])
+        return str_bin
+
+    def make_bin(self, table: MetaTable, database: MetaDatabase) -> Binary:
+        bin = Binary()
+        str_bin: StringBin = self.__make_string_bin(table)
+        str_bin.align(PACK_ALIGN)
+        ext_bin = Binary()
+        ext_bin += str_bin.bin
+        for member in table.members:
+            if is_ignore_type(member.var_type):
+                continue
+            if member.is_array():
+                bin.append("I", len(ext_bin))
+                array_bin = Binary()
+                for i in member.column_indices:
+                    value = self.value_strs[i]
                     if member.var_type == "bool":
                         array_bin.append("?", str_to_bool(value))
                     elif member.var_type == "int":
@@ -158,9 +185,16 @@ class MetaEntry:
                     elif member.var_type == "float":
                         array_bin.append("f", float(value))
                     elif member.var_type == "string":
-                        array_bin.append("I", len(ext_bin))
-                        ext_bin.append_string(value)
-                else:
+                        array_bin.append("i", str_bin.get_index(value))
+                    else:
+                        array_bin.append(
+                            "i", database.get_entry_id(member.var_type, value)
+                        )
+                array_bin.align(PACK_ALIGN)
+                ext_bin += array_bin
+            else:
+                for i in member.column_indices:
+                    value = self.value_strs[i]
                     if member.var_type == "bool":
                         bin.append("?", str_to_bool(value))
                     elif member.var_type == "int":
@@ -168,8 +202,10 @@ class MetaEntry:
                     elif member.var_type == "float":
                         bin.append("f", float(value))
                     elif member.var_type == "string":
-                        bin.append("I", len(ext_bin))
-                        ext_bin.append_string(value)
+                        bin.append("i", str_bin.get_index(value))
+                    else:
+                        bin.append("i", database.get_entry_id(member.var_type, value))
+        bin += ext_bin
         return bin
 
 
@@ -214,6 +250,13 @@ class MetaTable:
         self.members = list(member_map.values())
         self.members.sort(key=cmp_to_key(cmp_var_type))
 
+    def id_strs(self) -> list[str]:
+        strs: list[str] = []
+        for entry_name in self.entries:
+            entry = self.entries[entry_name]
+            strs += [f"{entry_name} = {entry.id}"]
+        return strs
+
     def member_strs(self) -> list[str]:
         strs: list[str] = []
         for member in self.members:
@@ -237,8 +280,16 @@ class MetaTable:
             print("};")
         else:
             print(f"enum class {self.id_str} {{")
+            print(os.linesep.join(["  " + line for line in self.id_strs()]))
             print("};")
         print()
+
+    def make_bin(self, database: MetaDatabase) -> Binary:
+        bin = BinaryArray()
+        for entry_name in self.entries:
+            entry = self.entries[entry_name]
+            bin.append(entry.id, entry.make_bin(self, database))
+        return bin.make_binary(PACK_ALIGN)
 
 
 class MetaDatabase:
@@ -277,7 +328,16 @@ class MetaDatabase:
                     # parse row
                     current_table.set_entry(row[0], row[1:])
 
-    def setup_table_ids(self):
+    def get_entry_id(self, table_name: str, entry_name: str) -> int:
+        if table_name not in self.meta_tables:
+            raise KeyError(f"not found table name: {table_name}")
+        table = self.meta_tables[table_name]
+        if entry_name not in table.entries:
+            raise KeyError(f"not found table name: {table_name}")
+        entry = table.entries[entry_name]
+        return entry.id
+
+    def setup_table(self):
         for i, key in enumerate(self.meta_tables):
             table = self.meta_tables[key]
             table.id = i + 1
@@ -287,12 +347,21 @@ class MetaDatabase:
     def output_cpp_header(self):
         print("#pragma once")
         print()
+        print("#include <cstddef>")
+        print()
         print("namespace generated {")
         print()
         for table_name in self.meta_tables:
             table = self.meta_tables[table_name]
             table.output_cpp_header()
         print("}")
+
+    def make_bin(self) -> Binary:
+        bin = BinaryArray()
+        for table_name in self.meta_tables:
+            table = self.meta_tables[table_name]
+            bin.append(table.id, table.make_bin(self))
+        return bin.make_binary(PACK_ALIGN)
 
 
 def list_csv_files(dir: str) -> list[str]:
@@ -307,30 +376,13 @@ def main():
     files = list_csv_files("./")
     database = MetaDatabase()
     database.parse(files)
-    database.setup_table_ids()
+    database.setup_table()
 
     database.output_cpp_header()
+    bin = database.make_bin()
 
-    """
-    for table_name in database.meta_tables:
-        table = database.meta_tables[table_name]
-        print("<{}:{}>".format(table.id, table.id_str))
-        for m in table.members:
-            for i in m.column_indices:
-                print("{}:{}".format(table.column_strs[i], table.type_strs[i]), end=" ")
-        print()
-        for entry in table.entries.values():
-            print("{}:{}>".format(entry.id, entry.id_str), end=" ")
-            for m in table.members:
-                for i in m.column_indices:
-                    print("'{}'".format(entry.value_strs[i]), end=" ")
-            print()
-    for table_name in database.meta_tables:
-        table = database.meta_tables[table_name]
-        print("<{}:{}>".format(table.id, table.id_str))
-        print("\n".join(table.member_strs()))
-        print("\n".join(table.method_strs("  ")))
-    """
+    with open("csv.bin", "wb") as f:
+        bin.tofile(f)
 
 
 if __name__ == "__main__":
