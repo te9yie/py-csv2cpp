@@ -1,10 +1,15 @@
 [sprite]
-<id>,path,x,y,w,h
+<name>,path,x,y,w,h
 <type>,string,int,int,int,int
 background,all.png,0,0,640,480
 ball,all.png,0,0,128,128
 
-[clickable]
-<id>,name,sprite,comment,radius,comment
-<type>,string,sprite,string,int,string
-ball,BALL,ball,"ball object",48,"for click"
+[comments]
+<name>,id,name,sprite,comment,radius,comment
+<type>,id,string,sprite,comment,int,comment
+ball,1,BALL,ball,"ball object",48,"for click"
+
+[arrays]
+<name>,link,link,num,num
+<type>,string,string,int,int
+foo,"hello","Hello",3,4

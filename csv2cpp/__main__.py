@@ -4,6 +4,7 @@ import os
 import glob
 import csv
 import re
+import textwrap
 
 
 TABLE_NAME_R = r"^\[(?P<name>.+)\]$"
@@ -13,7 +14,9 @@ TABLE_TAG_R = r"^<(?P<name>.+)>$"
 def get_memory_size(var_type: str) -> int:
     """型名のメモリ使用量を取得する"""
 
-    if var_type == "bool":
+    if var_type == "id" or var_type == "comment":
+        return 0
+    elif var_type == "bool":
         return 1
     elif var_type == "int":
         return 4
@@ -35,61 +38,66 @@ class MetaMember:
         self.column_indices: list[int] = []
 
     def memory_size(self) -> int:
+        memory_size = get_memory_size(self.var_type)
+        if memory_size == 0:
+            return 0
         if len(self.column_indices) > 1:
             return 4
-        return get_memory_size(self.var_type)
+        return memory_size
 
     def member_strs(self) -> list[str]:
+        if get_memory_size(self.var_type) == 0:
+            return []
         if len(self.column_indices) > 1:
-            return [""]
+            return [f"int {self.var_name}_offset;", f"std::size_t {self.var_name}_len;"]
         else:
             if self.var_type == "bool":
-                return ["bool {};".format(self.var_name)]
+                return [f"bool {self.var_name};"]
             if self.var_type == "int":
-                return ["int {};".format(self.var_name)]
+                return [f"int {self.var_name};"]
             if self.var_type == "float":
-                return ["float {};".format(self.var_name)]
+                return [f"float {self.var_name};"]
             if self.var_type == "string":
-                return ["int {}_offset;".format(self.var_name)]
-        return ["int {};".format(self.var_name)]
+                return [f"int {self.var_name}_offset;"]
+        return [f"int {self.var_name};"]
 
     def method_strs(self, indent: str) -> list[str]:
+        if get_memory_size(self.var_type) == 0:
+            return []
         if len(self.column_indices) > 1:
-            if self.var_type == "bool" or self.var_type == "int" or self.var_type == "float":
+            if (
+                self.var_type == "bool"
+                or self.var_type == "int"
+                or self.var_type == "float"
+            ):
                 return self.__array_method_strs(indent, self.var_name, self.var_type)
             elif self.var_type == "string":
                 return [
-                    "const char* {}(std::size_t i) const {{".format(self.var_name),
-                    "{}auto top = reinterpret_cast<const std::byte*>(this);".format(indent),
-                    "{}auto s_top = reinterpret_cast<const int*>(top + {}_offset);".format(
-                        indent, self.var_name
-                    ),
-                    "{}return reinterpret_cast<const char*>(s_top + i);".format(indent),
-                    "}",
+                    f"const char* {self.var_name}(std::size_t i) const {{",
+                    f"{indent}auto top = reinterpret_cast<const std::byte*>(this);",
+                    f"{indent}auto s_top = reinterpret_cast<const int*>(top + {self.var_name}_offset);",
+                    f"{indent}return reinterpret_cast<const char*>(s_top + i);",
+                    f"}}",
                 ]
             return self.__array_method_strs(indent, self.var_name, "int")
         else:
             if self.var_type == "string":
                 return [
-                    "const char* {}() const {{".format(self.var_name),
-                    "{}auto top = reinterpret_cast<const std::byte*>(this);".format(
-                        indent
-                    ),
-                    "{}return reinterpret_cast<const char*>(top + {}_offset);".format(
-                        indent, self.var_name
-                    ),
-                    "}",
+                    f"const char* {self.var_name}() const {{",
+                    f"{indent}auto top = reinterpret_cast<const std::byte*>(this);",
+                    f"{indent}return reinterpret_cast<const char*>(top + {self.var_name}_offset);",
+                    f"}}",
                 ]
         return []
 
-    def __array_method_strs(self, indent: str, var_name: str, var_type: str) -> list[str]:
+    def __array_method_strs(
+        self, indent: str, var_name: str, var_type: str
+    ) -> list[str]:
         return [
-            "{} {}(std::size_t i) const {{".format(var_type, var_name),
-            "{}auto top = reinterpret_cast<const std::byte*>(this);".format(indent),
-            "{}return *(reinterpret_cast<const {}*>(top + {}_offset) + i);".format(
-                indent, var_type, var_name
-            ),
-            "}",
+            f"{var_type} {var_name}(std::size_t i) const {{",
+            f"{indent}auto top = reinterpret_cast<const std::byte*>(this);",
+            f"{indent}return *(reinterpret_cast<const {var_type}*>(top + {var_name}_offset) + i);",
+            f"}}",
         ]
 
 
@@ -156,14 +164,28 @@ class MetaTable:
     def member_strs(self) -> list[str]:
         strs: list[str] = []
         for member in self.members:
-            strs += member.member_strs()
+            lines = member.member_strs()
+            strs += [line for line in lines if line != ""]
         return strs
 
     def method_strs(self, indent: str) -> list[str]:
         strs: list[str] = []
         for member in self.members:
-            strs += member.method_strs(indent)
+            lines = member.method_strs(indent)
+            strs += [line for line in lines if line != ""]
         return strs
+
+    def output_cpp_header(self):
+        if len(self.column_strs) > 0:
+            print(f"struct {self.id_str} {{")
+            print(os.linesep.join(["  " + line for line in self.member_strs()]))
+            print()
+            print(os.linesep.join(["  " + line for line in self.method_strs("  ")]))
+            print("};")
+        else:
+            print(f"enum class {self.id_str} {{")
+            print("};")
+        print()
 
 
 class MetaDatabase:
@@ -192,7 +214,7 @@ class MetaDatabase:
                     r = re.fullmatch(TABLE_TAG_R, row[0])
                     if r:
                         tag_name = r.group("name")
-                        if tag_name == "id":
+                        if tag_name == "name":
                             for i, value in enumerate(row[1:]):
                                 current_table.set_column_str(i, value)
                         if tag_name == "type":
@@ -209,6 +231,16 @@ class MetaDatabase:
             table.setup_entry_ids()
             table.setup_members()
 
+    def output_cpp_header(self):
+        print("#pragma once")
+        print()
+        print("namespace generated {")
+        print()
+        for table_name in self.meta_tables:
+            table = self.meta_tables[table_name]
+            table.output_cpp_header()
+        print("}")
+
 
 def list_csv_files(dir: str) -> list[str]:
     search_path = os.path.join(dir, "**", "*.csv")
@@ -224,6 +256,8 @@ def main():
     database.parse(files)
     database.setup_table_ids()
 
+    database.output_cpp_header()
+
     """
     for table_name in database.meta_tables:
         table = database.meta_tables[table_name]
@@ -238,12 +272,12 @@ def main():
                 for i in m.column_indices:
                     print("'{}'".format(entry.value_strs[i]), end=" ")
             print()
-    """
     for table_name in database.meta_tables:
         table = database.meta_tables[table_name]
         print("<{}:{}>".format(table.id, table.id_str))
         print("\n".join(table.member_strs()))
         print("\n".join(table.method_strs("  ")))
+    """
 
 
 if __name__ == "__main__":
