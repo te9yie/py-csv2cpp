@@ -1,10 +1,12 @@
 import argparse
+from __future__ import annotations
 from functools import cmp_to_key
 import os
 import glob
 import csv
 import re
-import textwrap
+
+from csv2cpp.binary import Binary
 
 
 TABLE_NAME_R = r"^\[(?P<name>.+)\]$"
@@ -29,6 +31,22 @@ def get_memory_size(var_type: str) -> int:
     return 4
 
 
+def str_to_bool(value: str) -> bool:
+    if value.lower() == "true" or value == "o" or value == "1":
+        return True
+    return False
+
+
+class StringBin:
+    def __init__(self):
+        self.bin: Binary = Binary()
+        self.index: dict[str, int] = {}
+
+    def append(self, s: str):
+        self.index[s] = len(self.bin)
+        self.bin.append_string(s)
+
+
 class MetaMember:
     """文字列で構成されたメンバー情報"""
 
@@ -37,18 +55,21 @@ class MetaMember:
         self.var_type: str = var_type
         self.column_indices: list[int] = []
 
+    def is_array(self) -> bool:
+        return len(self.column_indices) > 1
+
     def memory_size(self) -> int:
         memory_size = get_memory_size(self.var_type)
         if memory_size == 0:
             return 0
-        if len(self.column_indices) > 1:
+        if self.is_array():
             return 4
         return memory_size
 
     def member_strs(self) -> list[str]:
         if get_memory_size(self.var_type) == 0:
             return []
-        if len(self.column_indices) > 1:
+        if self.is_array():
             return [f"int {self.var_name}_offset;", f"std::size_t {self.var_name}_len;"]
         else:
             if self.var_type == "bool":
@@ -64,7 +85,7 @@ class MetaMember:
     def method_strs(self, indent: str) -> list[str]:
         if get_memory_size(self.var_type) == 0:
             return []
-        if len(self.column_indices) > 1:
+        if self.is_array():
             if (
                 self.var_type == "bool"
                 or self.var_type == "int"
@@ -118,6 +139,38 @@ class MetaEntry:
         self.id: int = 0
         self.id_str = id_str
         self.value_strs: list[str] = []
+
+    def make_bin(self, table: MetaTable) -> Binary:
+        str_bin: StringBin = make_string_bin()
+
+        bin = Binary()
+        ext_bin = Binary()
+        for member in table.members:
+            array_bin = Binary()
+            for i in member.column_indices:
+                value = self.value_strs[i]
+                if member.is_array():
+                    bin.append("I", len(ext_bin))
+                    if member.var_type == "bool":
+                        array_bin.append("?", str_to_bool(value))
+                    elif member.var_type == "int":
+                        array_bin.append("i", int(value))
+                    elif member.var_type == "float":
+                        array_bin.append("f", float(value))
+                    elif member.var_type == "string":
+                        array_bin.append("I", len(ext_bin))
+                        ext_bin.append_string(value)
+                else:
+                    if member.var_type == "bool":
+                        bin.append("?", str_to_bool(value))
+                    elif member.var_type == "int":
+                        bin.append("i", int(value))
+                    elif member.var_type == "float":
+                        bin.append("f", float(value))
+                    elif member.var_type == "string":
+                        bin.append("I", len(ext_bin))
+                        ext_bin.append_string(value)
+        return bin
 
 
 class MetaTable:
