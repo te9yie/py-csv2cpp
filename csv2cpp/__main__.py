@@ -1,4 +1,5 @@
 import argparse
+from functools import cmp_to_key
 import os
 import glob
 import csv
@@ -7,6 +8,46 @@ import re
 
 TABLE_NAME_R = r"^\[(?P<name>.+)\]$"
 TABLE_TAG_R = r"^<(?P<name>.+)>$"
+
+
+def get_memory_size(var_type: str) -> int:
+    """型名のメモリ使用量を取得する"""
+
+    if var_type == "bool":
+        return 1
+    elif var_type == "int":
+        return 4
+    elif var_type == "float":
+        return 4
+    elif var_type == "string":
+        return 4
+
+    # テーブル参照
+    return 4
+
+
+class MetaMember:
+    """文字列で構成されたメンバー情報"""
+
+    def __init__(self, var_name: str, var_type: str):
+        self.var_name: str = var_name
+        self.var_type: str = var_type
+        self.column_indices: list[int] = []
+
+    def memory_size(self):
+        if len(self.column_indices) > 1:
+            return 4
+        return get_memory_size(self.var_type)
+
+
+def cmp_var_type(a: MetaMember, b: MetaMember):
+    a_size = a.memory_size()
+    b_size = b.memory_size()
+    if a_size < b_size:
+        return 1
+    if a_size > b_size:
+        return -1
+    return 0
 
 
 class MetaEntry:
@@ -27,6 +68,7 @@ class MetaTable:
         self.column_strs: list[str] = []
         self.type_strs: list[str] = []
         self.entries: dict[str, MetaEntry] = {}
+        self.members: list[MetaMember] = []
 
     def set_column_str(self, i: int, value: str):
         if len(self.column_strs) >= i:
@@ -45,6 +87,18 @@ class MetaTable:
     def setup_entry_ids(self):
         for i, key in enumerate(self.entries):
             self.entries[key].id = i + 1
+
+    def setup_members(self):
+        member_map: dict[str, MetaMember] = {}
+
+        for i in range(len(self.column_strs)):
+            var_name = self.column_strs[i]
+            var_type = self.type_strs[i]
+            member = member_map.setdefault(var_name, MetaMember(var_name, var_type))
+            member.column_indices.append(i)
+
+        self.members = list(member_map.values())
+        self.members.sort(key=cmp_to_key(cmp_var_type))
 
 
 class MetaDatabase:
@@ -88,6 +142,7 @@ class MetaDatabase:
             table = self.meta_tables[key]
             table.id = i + 1
             table.setup_entry_ids()
+            table.setup_members()
 
 
 def list_csv_files(dir: str) -> list[str]:
@@ -107,13 +162,15 @@ def main():
     for table_name in database.meta_tables:
         table = database.meta_tables[table_name]
         print("<{}:{}>".format(table.id, table.id_str))
-        for i, column in enumerate(table.column_strs):
-            print("{}:{}".format(table.column_strs[i], table.type_strs[i]), end=" ")
+        for m in table.members:
+            for i in m.column_indices:
+                print("{}:{}".format(table.column_strs[i], table.type_strs[i]), end=" ")
         print()
         for entry in table.entries.values():
             print("{}:{}>".format(entry.id, entry.id_str), end=" ")
-            for column in entry.value_strs:
-                print(column, end=" ")
+            for m in table.members:
+                for i in m.column_indices:
+                    print("'{}'".format(entry.value_strs[i]), end=" ")
             print()
 
 

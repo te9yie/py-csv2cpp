@@ -5,6 +5,6 @@ background,all.png,0,0,640,480
 ball,all.png,0,0,128,128
 
 [clickable]
-<id>,sprite,radius
-<type>,sprite,int
-ball,ball,48
+<id>,sprite,comment,radius,comment
+<type>,sprite,string,int,string
+ball,ball,"ball object",48,"for click"
