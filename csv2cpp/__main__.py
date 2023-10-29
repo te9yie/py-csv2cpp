@@ -12,16 +12,18 @@ TABLE_TAG_R = r"^<(?P<name>.+)>$"
 class MetaEntry:
     """文字列で構成されたエントリー情報"""
 
-    def __init__(self, id: str):
-        self.id = id
-        self.values: list[str] = []
+    def __init__(self, id_str: str):
+        self.id: int = 0
+        self.id_str = id_str
+        self.value_strs: list[str] = []
 
 
 class MetaTable:
     """文字列で構成されたテーブル情報"""
 
-    def __init__(self, name: str):
-        self.name = name
+    def __init__(self, id_str: str):
+        self.id: int = 0
+        self.id_str = id_str
         self.column_strs: list[str] = []
         self.type_strs: list[str] = []
         self.entries: dict[str, MetaEntry] = {}
@@ -38,16 +40,19 @@ class MetaTable:
 
     def set_entry(self, id: str, values: list[str]):
         entry = self.entries.setdefault(id, MetaEntry(id))
-        entry.values = values
+        entry.value_strs = values
+
+    def setup_entry_ids(self):
+        for i, key in enumerate(self.entries):
+            self.entries[key].id = i + 1
 
 
-class Database:
-    def __init__(self, csv_files: list[str]) -> None:
-        self.csv_files = csv_files
+class MetaDatabase:
+    def __init__(self):
         self.meta_tables: dict[str, MetaTable] = {}
 
-    def parse(self):
-        for path in self.csv_files:
+    def parse(self, csv_files: list[str]):
+        for path in csv_files:
             with open(path) as f:
                 current_table: MetaTable | None = None
                 for row in csv.reader(f):
@@ -78,6 +83,12 @@ class Database:
                     # parse row
                     current_table.set_entry(row[0], row[1:])
 
+    def setup_table_ids(self):
+        for i, key in enumerate(self.meta_tables):
+            table = self.meta_tables[key]
+            table.id = i + 1
+            table.setup_entry_ids()
+
 
 def list_csv_files(dir: str) -> list[str]:
     search_path = os.path.join(dir, "**", "*.csv")
@@ -89,20 +100,21 @@ def main():
     parser.parse_args()
 
     files = list_csv_files("./")
-    database = Database(files)
-    database.parse()
+    database = MetaDatabase()
+    database.parse(files)
+    database.setup_table_ids()
 
     for table_name in database.meta_tables:
         table = database.meta_tables[table_name]
-        print()
-        print("<{}>".format(table.name))
+        print("<{}:{}>".format(table.id, table.id_str))
         for i, column in enumerate(table.column_strs):
             print("{}:{}".format(table.column_strs[i], table.type_strs[i]), end=" ")
+        print()
         for entry in table.entries.values():
-            print()
-            print("{}:".format(entry.id), end=" ")
-            for column in entry.values:
+            print("{}:{}>".format(entry.id, entry.id_str), end=" ")
+            for column in entry.value_strs:
                 print(column, end=" ")
+            print()
 
 
 if __name__ == "__main__":
