@@ -1,9 +1,0 @@
-{
-    "python.analysis.autoImportCompletions": true,
-    "python.analysis.typeCheckingMode": "basic",
-    "[python]": {
-        "editor.defaultFormatter": "ms-python.black-formatter"
-    },
-    "python.formatting.provider": "none",
-    "cmake.sourceDirectory": "/home/i/w/py-csv2cpp/build/_deps/googletest-src"
-}
