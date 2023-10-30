@@ -1,0 +1,6 @@
+BasedOnStyle: Chromium
+
+# SingleLine (for Breakpoints)
+AllowShortBlocksOnASingleLine: Empty
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortLambdasOnASingleLine: Empty

@@ -1,4 +1,4 @@
-from .binary import Binary
+from csv2cpp.binary import Binary
 
 
 class BinaryArray:

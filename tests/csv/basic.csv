@@ -1,0 +1,11 @@
+[Basic]
+<column>,name,age,weight,can_battle,skill,skill,friends,friends
+<type>,string,int,float,bool,Skill,Skill,string,string
+alice,"Alice",24,58.5,true,FireBall,,"Carol","Dave"
+bob,"Bob",32,84.5,false
+
+[Skill]
+<column>,name
+<type>,string
+FireBall,"Fire Ball"
+ThunderStorm,"Thunder Storm"

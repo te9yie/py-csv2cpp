@@ -6,13 +6,15 @@ import glob
 import csv
 import re
 
-from .binary import Binary
-from .binary_array import BinaryArray
+from csv2cpp.binary import Binary
+from csv2cpp.binary_array import BinaryArray
 
 
 PACK_ALIGN = 4
+INDENT = "  "
+NAMESPACE = "generated"
 TABLE_NAME_R = r"^\[(?P<name>.+)\]$"
-TABLE_TAG_R = r"^<(?P<name>.+)>$"
+TABLE_COLUMN_R = r"^<(?P<name>.+)>$"
 
 
 def is_ignore_type(var_type: str) -> bool:
@@ -45,10 +47,32 @@ def str_to_bool(value: str) -> bool:
     return False
 
 
+def make_member_strs(
+    var_name: str, var_type: str, length: int, suffix: str = ""
+) -> list[str]:
+    if length > 1:
+        return [
+            f"static constexpr int {var_name}_len = {length};",
+            f"{var_type} {var_name}{suffix}[{length}];",
+        ]
+    else:
+        return [f"{var_type} {var_name}{suffix};"]
+
+
+def make_array_method_strs(indent: str, var_name: str, var_type: str) -> list[str]:
+    return [
+        f"{var_type} {var_name}(std::size_t i) const {{",
+        f"{indent}auto top = reinterpret_cast<const std::byte*>(this + 1);",
+        f"{indent}return *(reinterpret_cast<const {var_type}*>(top + {var_name}_offset) + i);",
+        "}",
+    ]
+
+
 class StringBin:
     def __init__(self):
         self.bin: Binary = Binary()
         self.index: dict[str, int] = {}
+        self.append("")
 
     def append(self, s: str):
         self.index[s] = len(self.bin)
@@ -84,57 +108,40 @@ class MetaMember:
     def member_strs(self) -> list[str]:
         if is_ignore_type(self.var_type):
             return []
-        if self.is_array():
-            return [f"int {self.var_name}_offset;", f"int {self.var_name}_len;"]
-        else:
-            if self.var_type == "bool":
-                return [f"bool {self.var_name};"]
-            if self.var_type == "int":
-                return [f"int {self.var_name};"]
-            if self.var_type == "float":
-                return [f"float {self.var_name};"]
-            if self.var_type == "string":
-                return [f"int {self.var_name}_offset;"]
-        return [f"int {self.var_name};"]
+        if (
+            self.var_type == "bool"
+            or self.var_type == "int"
+            or self.var_type == "float"
+        ):
+            return make_member_strs(
+                self.var_name, self.var_type, len(self.column_indices)
+            )
+        if self.var_type == "string":
+            return make_member_strs(
+                self.var_name, "int", len(self.column_indices), "_offset"
+            )
+        return make_member_strs(f"{self.var_name}", "int", len(self.column_indices))
 
     def method_strs(self, indent: str) -> list[str]:
         if is_ignore_type(self.var_type):
             return []
         if self.is_array():
-            if (
-                self.var_type == "bool"
-                or self.var_type == "int"
-                or self.var_type == "float"
-            ):
-                return self.__array_method_strs(indent, self.var_name, self.var_type)
-            elif self.var_type == "string":
+            if self.var_type == "string":
                 return [
                     f"const char* {self.var_name}(std::size_t i) const {{",
-                    f"{indent}auto top = reinterpret_cast<const std::byte*>(this);",
-                    f"{indent}auto s_top = reinterpret_cast<const int*>(top + {self.var_name}_offset);",
-                    f"{indent}return reinterpret_cast<const char*>(s_top + i);",
+                    f"{indent}auto top = reinterpret_cast<const std::byte*>(this + 1);",
+                    f"{indent}return reinterpret_cast<const char*>(top + {self.var_name}_offset[i]);",
                     "}",
                 ]
-            return self.__array_method_strs(indent, self.var_name, "int")
         else:
             if self.var_type == "string":
                 return [
                     f"const char* {self.var_name}() const {{",
-                    f"{indent}auto top = reinterpret_cast<const std::byte*>(this);",
+                    f"{indent}auto top = reinterpret_cast<const std::byte*>(this + 1);",
                     f"{indent}return reinterpret_cast<const char*>(top + {self.var_name}_offset);",
                     "}",
                 ]
         return []
-
-    def __array_method_strs(
-        self, indent: str, var_name: str, var_type: str
-    ) -> list[str]:
-        return [
-            f"{var_type} {var_name}(std::size_t i) const {{",
-            f"{indent}auto top = reinterpret_cast<const std::byte*>(this);",
-            f"{indent}return *(reinterpret_cast<const {var_type}*>(top + {var_name}_offset) + i);",
-            "}",
-        ]
 
 
 def cmp_var_type(a: MetaMember, b: MetaMember) -> int:
@@ -161,7 +168,7 @@ class MetaEntry:
             if member.var_type != "string":
                 continue
             for i in member.column_indices:
-                str_bin.append(self.value_strs[i])
+                str_bin.append(self.value_strs[i] if i < len(self.value_strs) else "")
         return str_bin
 
     def make_bin(self, table: MetaTable, database: MetaDatabase) -> Binary:
@@ -173,38 +180,22 @@ class MetaEntry:
         for member in table.members:
             if is_ignore_type(member.var_type):
                 continue
-            if member.is_array():
-                bin.append("I", len(ext_bin))
-                array_bin = Binary()
-                for i in member.column_indices:
-                    value = self.value_strs[i]
-                    if member.var_type == "bool":
-                        array_bin.append("?", str_to_bool(value))
-                    elif member.var_type == "int":
-                        array_bin.append("i", int(value))
-                    elif member.var_type == "float":
-                        array_bin.append("f", float(value))
-                    elif member.var_type == "string":
-                        array_bin.append("i", str_bin.get_index(value))
-                    else:
-                        array_bin.append(
-                            "i", database.get_entry_id(member.var_type, value)
-                        )
-                array_bin.align(PACK_ALIGN)
-                ext_bin += array_bin
-            else:
-                for i in member.column_indices:
-                    value = self.value_strs[i]
-                    if member.var_type == "bool":
-                        bin.append("?", str_to_bool(value))
-                    elif member.var_type == "int":
-                        bin.append("i", int(value))
-                    elif member.var_type == "float":
-                        bin.append("f", float(value))
-                    elif member.var_type == "string":
-                        bin.append("i", str_bin.get_index(value))
-                    else:
-                        bin.append("i", database.get_entry_id(member.var_type, value))
+            for i in member.column_indices:
+                value = self.value_strs[i] if i < len(self.value_strs) else None
+                if member.var_type == "bool":
+                    bin.append("?", str_to_bool(value if value else "False"))
+                elif member.var_type == "int":
+                    bin.append("i", int(value if value else "0"))
+                elif member.var_type == "float":
+                    bin.append("f", float(value if value else "0"))
+                elif member.var_type == "string":
+                    bin.append("i", str_bin.get_index(value if value else ""))
+                else:
+                    bin.append(
+                        "i",
+                        database.get_entry_id(member.var_type, value) if value else 0,
+                    )
+        bin.align(PACK_ALIGN)
         bin += ext_bin
         return bin
 
@@ -219,6 +210,9 @@ class MetaTable:
         self.type_strs: list[str] = []
         self.entries: dict[str, MetaEntry] = {}
         self.members: list[MetaMember] = []
+
+    def is_enum(self) -> bool:
+        return len(self.column_strs) == 0
 
     def set_column_str(self, i: int, value: str):
         if len(self.column_strs) >= i:
@@ -250,11 +244,11 @@ class MetaTable:
         self.members = list(member_map.values())
         self.members.sort(key=cmp_to_key(cmp_var_type))
 
-    def id_strs(self) -> list[str]:
+    def id_strs(self, end: str) -> list[str]:
         strs: list[str] = []
         for entry_name in self.entries:
             entry = self.entries[entry_name]
-            strs += [f"{entry_name} = {entry.id}"]
+            strs += [f"{entry_name} = {entry.id}{end}"]
         return strs
 
     def member_strs(self) -> list[str]:
@@ -272,17 +266,36 @@ class MetaTable:
         return strs
 
     def output_cpp_header(self):
-        if len(self.column_strs) > 0:
-            print(f"struct {self.id_str} {{")
-            print(os.linesep.join(["  " + line for line in self.member_strs()]))
+        if self.is_enum():
+            print(f"enum {self.id_str} {{")
+            print(
+                os.linesep.join(
+                    [
+                        f"{INDENT}{self.id_str.upper()}_{line}"
+                        for line in self.id_strs(",")
+                    ]
+                )
+            )
+            print("};")
             print()
-            print(os.linesep.join(["  " + line for line in self.method_strs("  ")]))
-            print("};")
         else:
-            print(f"enum class {self.id_str} {{")
-            print(os.linesep.join(["  " + line for line in self.id_strs()]))
+            print(f"struct {self.id_str} {{")
+            print(os.linesep.join([INDENT + line for line in self.member_strs()]))
+            print()
+            print(os.linesep.join([INDENT + line for line in self.method_strs(INDENT)]))
             print("};")
-        print()
+            print()
+            print(f"enum {self.id_str}Id {{")
+            print(
+                os.linesep.join(
+                    [
+                        f"{INDENT}{self.id_str.upper()}_{line}"
+                        for line in self.id_strs(",")
+                    ]
+                )
+            )
+            print("};")
+            print()
 
     def make_bin(self, database: MetaDatabase) -> Binary:
         bin = BinaryArray()
@@ -315,10 +328,10 @@ class MetaDatabase:
                     if not current_table:
                         continue
                     # parse tags
-                    r = re.fullmatch(TABLE_TAG_R, row[0])
+                    r = re.fullmatch(TABLE_COLUMN_R, row[0])
                     if r:
                         tag_name = r.group("name")
-                        if tag_name == "name":
+                        if tag_name == "column":
                             for i, value in enumerate(row[1:]):
                                 current_table.set_column_str(i, value)
                         if tag_name == "type":
@@ -349,7 +362,15 @@ class MetaDatabase:
         print()
         print("#include <cstddef>")
         print()
-        print("namespace generated {")
+        print(f"namespace {NAMESPACE} {{")
+        print()
+        print("enum TableId {")
+        for table_name in self.meta_tables:
+            table = self.meta_tables[table_name]
+            if table.is_enum():
+                continue
+            print(f"{INDENT}TABLE_{table_name} = {table.id},")
+        print("};")
         print()
         for table_name in self.meta_tables:
             table = self.meta_tables[table_name]
@@ -360,6 +381,8 @@ class MetaDatabase:
         bin = BinaryArray()
         for table_name in self.meta_tables:
             table = self.meta_tables[table_name]
+            if table.is_enum():
+                continue
             bin.append(table.id, table.make_bin(self))
         return bin.make_binary(PACK_ALIGN)
 
