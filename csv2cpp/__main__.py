@@ -1,10 +1,12 @@
 from __future__ import annotations
 import argparse
+from distutils.util import strtobool
 from functools import cmp_to_key
 import os
 import glob
 import csv
 import re
+import sys
 
 from csv2cpp.binary import Binary
 from csv2cpp.binary_array import BinaryArray
@@ -18,13 +20,15 @@ TABLE_COLUMN_R = r"^<(?P<name>.+)>$"
 
 
 def is_ignore_type(var_type: str) -> bool:
+    """出力時に無視する型"""
+
     if var_type == "id" or var_type == "comment":
         return True
     return False
 
 
 def get_memory_size(var_type: str) -> int:
-    """型名のメモリ使用量を取得する"""
+    """型のメモリ使用量を取得する"""
 
     if is_ignore_type(var_type):
         return 0
@@ -41,15 +45,11 @@ def get_memory_size(var_type: str) -> int:
     return 4
 
 
-def str_to_bool(value: str) -> bool:
-    if value.lower() == "true" or value == "o" or value == "1":
-        return True
-    return False
-
-
 def make_member_strs(
     var_name: str, var_type: str, length: int, suffix: str = ""
 ) -> list[str]:
+    """メンバ変数の定義文字列をつくる"""
+
     if length > 1:
         return [
             f"static constexpr int {var_name}_len = {length};",
@@ -59,16 +59,9 @@ def make_member_strs(
         return [f"{var_type} {var_name}{suffix};"]
 
 
-def make_array_method_strs(indent: str, var_name: str, var_type: str) -> list[str]:
-    return [
-        f"{var_type} {var_name}(std::size_t i) const {{",
-        f"{indent}auto top = reinterpret_cast<const std::byte*>(this + 1);",
-        f"{indent}return *(reinterpret_cast<const {var_type}*>(top + {var_name}_offset) + i);",
-        "}",
-    ]
-
-
 class StringBin:
+    """文字列バイナリパック"""
+
     def __init__(self):
         self.bin: Binary = Binary()
         self.index: dict[str, int] = {}
@@ -106,6 +99,8 @@ class MetaMember:
         return get_memory_size(self.var_type)
 
     def member_strs(self) -> list[str]:
+        """メンバ定義文字列を返す"""
+
         if is_ignore_type(self.var_type):
             return []
         if (
@@ -120,21 +115,22 @@ class MetaMember:
             return make_member_strs(
                 self.var_name, "int", len(self.column_indices), "_offset"
             )
-        return make_member_strs(f"{self.var_name}", "int", len(self.column_indices))
+        return make_member_strs(self.var_name, "int", len(self.column_indices))
 
     def method_strs(self, indent: str) -> list[str]:
+        """メソッド定義文字列を返す"""
+
         if is_ignore_type(self.var_type):
             return []
-        if self.is_array():
-            if self.var_type == "string":
+        if self.var_type == "string":
+            if self.is_array():
                 return [
                     f"const char* {self.var_name}(std::size_t i) const {{",
                     f"{indent}auto top = reinterpret_cast<const std::byte*>(this + 1);",
                     f"{indent}return reinterpret_cast<const char*>(top + {self.var_name}_offset[i]);",
                     "}",
                 ]
-        else:
-            if self.var_type == "string":
+            else:
                 return [
                     f"const char* {self.var_name}() const {{",
                     f"{indent}auto top = reinterpret_cast<const std::byte*>(this + 1);",
@@ -145,6 +141,8 @@ class MetaMember:
 
 
 def cmp_var_type(a: MetaMember, b: MetaMember) -> int:
+    """メモリサイズでソートするための比較関数"""
+
     a_size = a.memory_size()
     b_size = b.memory_size()
     if a_size < b_size:
@@ -175,15 +173,13 @@ class MetaEntry:
         bin = Binary()
         str_bin: StringBin = self.__make_string_bin(table)
         str_bin.align(PACK_ALIGN)
-        ext_bin = Binary()
-        ext_bin += str_bin.bin
         for member in table.members:
             if is_ignore_type(member.var_type):
                 continue
             for i in member.column_indices:
                 value = self.value_strs[i] if i < len(self.value_strs) else None
                 if member.var_type == "bool":
-                    bin.append("?", str_to_bool(value if value else "False"))
+                    bin.append("?", strtobool(value if value else "False"))
                 elif member.var_type == "int":
                     bin.append("i", int(value if value else "0"))
                 elif member.var_type == "float":
@@ -196,7 +192,7 @@ class MetaEntry:
                         database.get_entry_id(member.var_type, value) if value else 0,
                     )
         bin.align(PACK_ALIGN)
-        bin += ext_bin
+        bin += str_bin.bin
         return bin
 
 
@@ -208,8 +204,8 @@ class MetaTable:
         self.id_str = id_str
         self.column_strs: list[str] = []
         self.type_strs: list[str] = []
-        self.entries: dict[str, MetaEntry] = {}
         self.members: list[MetaMember] = []
+        self.entries: dict[str, MetaEntry] = {}
 
     def is_enum(self) -> bool:
         return len(self.column_strs) == 0
@@ -280,9 +276,13 @@ class MetaTable:
             print()
         else:
             print(f"struct {self.id_str} {{")
-            print(os.linesep.join([INDENT + line for line in self.member_strs()]))
+            print(os.linesep.join([f"{INDENT}{line}" for line in self.member_strs()]))
             print()
-            print(os.linesep.join([INDENT + line for line in self.method_strs(INDENT)]))
+            print(
+                os.linesep.join(
+                    [f"{INDENT}{line}" for line in self.method_strs(INDENT)]
+                )
+            )
             print("};")
             print()
             print(f"enum {self.id_str}Id {{")
@@ -357,7 +357,7 @@ class MetaDatabase:
             table.setup_entry_ids()
             table.setup_members()
 
-    def output_cpp_header(self):
+    def __make_header(self):
         print("#pragma once")
         print()
         print("#include <cstddef>")
@@ -377,7 +377,7 @@ class MetaDatabase:
             table.output_cpp_header()
         print("}")
 
-    def make_bin(self) -> Binary:
+    def __make_bin(self) -> Binary:
         bin = BinaryArray()
         for table_name in self.meta_tables:
             table = self.meta_tables[table_name]
@@ -386,6 +386,20 @@ class MetaDatabase:
             bin.append(table.id, table.make_bin(self))
         return bin.make_binary(PACK_ALIGN)
 
+    def output_header(self, path: str):
+        if path == "":
+            self.__make_header()
+        else:
+            with open(path, "w") as f:
+                sys.stdout = f
+                self.__make_header()
+                sys.stdout = sys.__stdout__
+
+    def output_bin(self, path: str):
+        bin = self.__make_bin()
+        with open(path, "wb") as f:
+            bin.tofile(f)
+
 
 def list_csv_files(dir: str) -> list[str]:
     search_path = os.path.join(dir, "**", "*.csv")
@@ -393,19 +407,20 @@ def list_csv_files(dir: str) -> list[str]:
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.parse_args()
+    parser = argparse.ArgumentParser(prog="csv2cpp")
+    parser.add_argument("-i", "--input-dir")
+    parser.add_argument("-oh", "--output-header")
+    parser.add_argument("-ob", "--output-bin")
+    args = parser.parse_args()
 
-    files = list_csv_files("./")
+    files = list_csv_files(args.input_dir if args.input_dir else "")
     database = MetaDatabase()
     database.parse(files)
     database.setup_table()
 
-    database.output_cpp_header()
-    bin = database.make_bin()
-
-    with open("csv.bin", "wb") as f:
-        bin.tofile(f)
+    database.output_header(args.output_header if args.output_header else "")
+    if args.output_bin:
+        database.output_bin(args.output_bin)
 
 
 if __name__ == "__main__":

@@ -8,20 +8,20 @@ struct BinaryArray {
     int size;
     int offset;
   };
-  int number_of_items;
+  int item_count;
   Index index[1];
 
   template <class T>
   void assign_by_index(T*& p, int i) const {
-    assert(i >= 0 && i < number_of_items);
-    auto top = reinterpret_cast<const std::byte*>(index + number_of_items);
+    assert(i >= 0 && i < item_count);
+    auto top = reinterpret_cast<const std::byte*>(index + item_count);
     p = reinterpret_cast<T*>(top + index[i].offset);
   }
 
   template <class T>
   bool assign_by_id(T*& p, int id) const {
     // TODO: optimize
-    for (int i = 0; i < number_of_items; ++i) {
+    for (int i = 0; i < item_count; ++i) {
       if (index[i].id == id) {
         assign_by_index(p, i);
         return true;

@@ -3,9 +3,6 @@ url = "https://pypi.org/simple"
 verify_ssl = true
 name = "pypi"
 
-[packages]
-jinja2 = "*"
-
 [dev-packages]
 black = "*"
 flake8 = "*"

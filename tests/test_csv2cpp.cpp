@@ -22,7 +22,7 @@ class Csv2CppTest : public testing::Test {
 
 TEST_F(Csv2CppTest, Table) {
   auto bin = reinterpret_cast<const BinaryArray*>(csv_bin.data());
-  EXPECT_EQ(bin->number_of_items, 2);
+  EXPECT_EQ(bin->item_count, 2);
 }
 
 TEST_F(Csv2CppTest, Basic) {
