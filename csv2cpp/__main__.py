@@ -1,6 +1,5 @@
 from __future__ import annotations
 import argparse
-from distutils.util import strtobool
 from functools import cmp_to_key
 import os
 import glob
@@ -43,6 +42,10 @@ def get_memory_size(var_type: str) -> int:
 
     # テーブル参照
     return 4
+
+
+def str_to_bool(s: str) -> bool:
+    return s.lower() in ["true", "on", "yes", "t", "y", "o"]
 
 
 def make_member_strs(
@@ -189,7 +192,7 @@ class MetaEntry:
             for i in member.column_indices:
                 value = self.value_strs[i] if i < len(self.value_strs) else None
                 if member.var_type == "bool":
-                    bin.append("?", strtobool(value if value else "False"))
+                    bin.append("?", str_to_bool(value if value else "False"))
                 elif member.var_type == "int":
                     bin.append("i", int(value if value else "0"))
                 elif member.var_type == "float":
