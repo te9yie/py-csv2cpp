@@ -2,6 +2,8 @@
 
 CSVファイルからC++のヘッダファイルとバイナリを生成する
 
+`python -m pip install git+https://github.com/te9yie/py-csv2cpp.git`
+
 ## Usage
 
 ```txt
