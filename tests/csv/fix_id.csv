@@ -1,0 +1,5 @@
+[item]
+<column>,id,name
+<type>,id,string
+potion,100,"ポーション"
+cure_leaf,101,"薬草"

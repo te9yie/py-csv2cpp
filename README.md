@@ -38,14 +38,6 @@ alice,"Alice",24,58.5,true,FireBall,,"Carol","Dave"
 bob,"Bob",32,84.5,false
 ```
 
-### 対応している型
-
-- bool
-- int
-- float
-- string
-- 他のテーブルへの参照（ID）
-
 ### 出力ヘッダ
 
 ```cpp
@@ -72,6 +64,19 @@ struct Basic {
 ```
 
 [tests/csv.h](tests/csv.h)
+
+### 対応している型
+
+- bool
+- int
+- float
+- string
+- 他のテーブルへの参照
+- id (バイナリはIDの順に並ぶ)
+- comment, # (コメント)
+
+`id` はIDを固定したり、バイナリの出力順を指定したいときに使う。
+セーブファイルにIDを保存したりする場合は固定しておかないと行を追加した場合にずれる可能性がある。
 
 ## 読み込み方
 

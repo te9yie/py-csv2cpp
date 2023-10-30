@@ -22,7 +22,7 @@ TABLE_COLUMN_R = r"^<(?P<name>.+)>$"
 def is_ignore_type(var_type: str) -> bool:
     """出力時に無視する型"""
 
-    if var_type == "id" or var_type == "comment":
+    if var_type == "id" or var_type == "comment" or var_type == "#":
         return True
     return False
 
@@ -152,6 +152,16 @@ def cmp_var_type(a: MetaMember, b: MetaMember) -> int:
     return 0
 
 
+def cmp_entry_id(a: MetaEntry, b: MetaEntry) -> int:
+    """EntryのIDでソートするための比較関数"""
+
+    if a.id < b.id:
+        return -1
+    if a.id > b.id:
+        return 1
+    return 0
+
+
 class MetaEntry:
     """文字列で構成されたエントリー情報"""
 
@@ -205,7 +215,9 @@ class MetaTable:
         self.column_strs: list[str] = []
         self.type_strs: list[str] = []
         self.members: list[MetaMember] = []
-        self.entries: dict[str, MetaEntry] = {}
+        self.entries: list[MetaEntry] = []
+        self.entry_dict: dict[str, MetaEntry] = {}
+        self.has_id_column: bool = False
 
     def is_enum(self) -> bool:
         return len(self.column_strs) == 0
@@ -220,13 +232,11 @@ class MetaTable:
             self.type_strs.extend([""] * (i - len(self.type_strs) + 1))
         self.type_strs[i] = value
 
-    def set_entry(self, id: str, values: list[str]):
-        entry = self.entries.setdefault(id, MetaEntry(id))
+    def add_entry(self, id_str: str, values: list[str]):
+        entry = MetaEntry(id_str)
         entry.value_strs = values
-
-    def setup_entry_ids(self):
-        for i, key in enumerate(self.entries):
-            self.entries[key].id = i + 1
+        self.entries.append(entry)
+        self.entry_dict.setdefault(id_str, entry)
 
     def setup_members(self):
         member_map: dict[str, MetaMember] = {}
@@ -234,17 +244,41 @@ class MetaTable:
         for i in range(len(self.column_strs)):
             var_name = self.column_strs[i]
             var_type = self.type_strs[i]
+
+            if var_type == "id":
+                self.has_id_column = True
+
             member = member_map.setdefault(var_name, MetaMember(var_name, var_type))
             member.column_indices.append(i)
 
         self.members = list(member_map.values())
         self.members.sort(key=cmp_to_key(cmp_var_type))
 
+    def __id_column_index(self):
+        for member in self.members:
+            if member.var_type == "id":
+                return member.column_indices[0]
+        raise KeyError("not found id column")
+
+    def setup_entry_ids(self):
+        if self.has_id_column:
+            i = self.__id_column_index()
+            for entry in self.entries:
+                id = entry.value_strs[i]
+                if id == "":
+                    raise ValueError(f"id is not set: {self.id_str}::{entry.id_str}")
+                entry.id = int(id)
+        else:
+            for i, entry in enumerate(self.entries):
+                entry.id = i + 1
+        self.entries.sort(key=cmp_to_key(cmp_entry_id))
+
     def id_strs(self, end: str) -> list[str]:
         strs: list[str] = []
-        for entry_name in self.entries:
-            entry = self.entries[entry_name]
-            strs += [f"{entry_name} = {entry.id}{end}"]
+        for entry in self.entries:
+            if entry.id_str == "":
+                continue
+            strs += [f"{entry.id_str} = {entry.id}{end}"]
         return strs
 
     def member_strs(self) -> list[str]:
@@ -276,13 +310,19 @@ class MetaTable:
             print()
         else:
             print(f"struct {self.id_str} {{")
-            print(os.linesep.join([f"{INDENT}{line}" for line in self.member_strs()]))
-            print()
-            print(
-                os.linesep.join(
-                    [f"{INDENT}{line}" for line in self.method_strs(INDENT)]
+            members = self.member_strs()
+            if len(members) > 0:
+                print(
+                    os.linesep.join([f"{INDENT}{line}" for line in self.member_strs()])
                 )
-            )
+            methods = self.method_strs(INDENT)
+            if len(methods) > 0:
+                print()
+                print(
+                    os.linesep.join(
+                        [f"{INDENT}{line}" for line in self.method_strs(INDENT)]
+                    )
+                )
             print("};")
             print()
             print(f"enum {self.id_str}Id {{")
@@ -299,8 +339,7 @@ class MetaTable:
 
     def make_bin(self, database: MetaDatabase) -> Binary:
         bin = BinaryArray()
-        for entry_name in self.entries:
-            entry = self.entries[entry_name]
+        for entry in self.entries:
             bin.append(entry.id, entry.make_bin(self, database))
         return bin.make_binary(PACK_ALIGN)
 
@@ -315,6 +354,8 @@ class MetaDatabase:
                 current_table: MetaTable | None = None
                 for row in csv.reader(f):
                     if len(row) == 0:
+                        continue
+                    if row[0].startswith("#"):
                         continue
                     r = re.fullmatch(TABLE_NAME_R, row[0])
                     # parse table
@@ -339,23 +380,23 @@ class MetaDatabase:
                                 current_table.set_type_str(i, value)
                         continue
                     # parse row
-                    current_table.set_entry(row[0], row[1:])
+                    current_table.add_entry(row[0], row[1:])
 
     def get_entry_id(self, table_name: str, entry_name: str) -> int:
         if table_name not in self.meta_tables:
             raise KeyError(f"not found table name: {table_name}")
         table = self.meta_tables[table_name]
-        if entry_name not in table.entries:
+        if entry_name not in table.entry_dict:
             raise KeyError(f"not found table name: {table_name}")
-        entry = table.entries[entry_name]
+        entry = table.entry_dict[entry_name]
         return entry.id
 
     def setup_table(self):
         for i, key in enumerate(self.meta_tables):
             table = self.meta_tables[key]
             table.id = i + 1
-            table.setup_entry_ids()
             table.setup_members()
+            table.setup_entry_ids()
 
     def __make_header(self):
         print("#pragma once")

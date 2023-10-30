@@ -1,0 +1,11 @@
+[NoLabel]
+<column>,id,enable,value
+<type>,id,bool,int
+First,10,True,10
+,11,True,20
+,12,True,30
+,13,False,0
+Second,20,True,100
+,21,True,200
+,22,True,300
+,23,False,0

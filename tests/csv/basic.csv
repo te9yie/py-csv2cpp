@@ -5,7 +5,7 @@ alice,"Alice",24,58.5,true,FireBall,,"Carol","Dave"
 bob,"Bob",32,84.5,false
 
 [Skill]
-<column>,name
-<type>,string
-FireBall,"Fire Ball"
-ThunderStorm,"Thunder Storm"
+<column>,name,
+<type>,string,comment
+FireBall,"Fire Ball",fire ball
+ThunderStorm,"Thunder Storm",thunder storm

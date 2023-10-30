@@ -22,7 +22,7 @@ class Csv2CppTest : public testing::Test {
 
 TEST_F(Csv2CppTest, Table) {
   auto bin = reinterpret_cast<const BinaryArray*>(csv_bin.data());
-  EXPECT_EQ(bin->item_count, 2);
+  EXPECT_EQ(bin->item_count, 4);
 }
 
 TEST_F(Csv2CppTest, Basic) {
@@ -53,6 +53,28 @@ TEST_F(Csv2CppTest, Basic) {
     EXPECT_EQ(basic_p->skill[1], 0);
     EXPECT_STREQ(basic_p->friends(0), "");
     EXPECT_STREQ(basic_p->friends(1), "");
+  }
+}
+
+TEST_F(Csv2CppTest, NoLabel) {
+  auto bin = reinterpret_cast<const BinaryArray*>(csv_bin.data());
+
+  const BinaryArray* table_p = nullptr;
+  EXPECT_TRUE(bin->assign_by_id(table_p, generated::TABLE_NoLabel));
+
+  const int expect_value[] = {
+      100,
+      200,
+      300,
+  };
+
+  const generated::NoLabel* entry_p = nullptr;
+  int i = 0;
+
+  EXPECT_TRUE(table_p->assign_by_id(entry_p, generated::NOLABEL_Second, &i));
+  for (int e_i = 0; entry_p->enable;
+       ++e_i, table_p->assign_by_index(entry_p, ++i)) {
+    EXPECT_EQ(entry_p->value, expect_value[e_i]);
   }
 }
 

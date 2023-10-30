@@ -19,11 +19,14 @@ struct BinaryArray {
   }
 
   template <class T>
-  bool assign_by_id(T*& p, int id) const {
+  bool assign_by_id(T*& p, int id, int* out_index = nullptr) const {
     // TODO: optimize
     for (int i = 0; i < item_count; ++i) {
       if (index[i].id == id) {
         assign_by_index(p, i);
+        if (out_index) {
+          *out_index = i;
+        }
         return true;
       }
     }
